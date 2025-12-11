@@ -1,3 +1,6 @@
+The mod itself will be later split into more defined CS files for each part of the application.
+
+
 VS Mod Bridge – Developer Documentation
 1. INTRODUCTION
 VS Mod Bridge is a lightweight data-access layer for Virtual Skate.
