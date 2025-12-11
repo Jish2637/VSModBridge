@@ -1,0 +1,440 @@
+﻿VSModBridge API (v1)
+
+Bridge mod for Virtual Skate that exposes VR rig, board targets, input state, and high-level player flags for use by other mods.
+
+Assembly name: VSModBridge
+
+Namespace: VS.ModBridge
+
+Contract version: VSBridge.ApiVersion = 1
+
+Primary entry point: VSBridge MonoBehaviour
+(auto-spawned by VSBridge.Ensure() + runtime bootstrap)
+
+The bridge is designed to be read-only: it reflects game state and raises events; consumer mods subscribe and react.
+
+
+1. Public Data Contracts
+1.1 VSPlayerState
+public enum VSPlayerState
+{
+    Unknown = 0,
+    OffBoard = 1,
+    Riding   = 2,
+    Bailed   = 3
+}
+
+
+High-level coarse player state, derived from PlayerManager.CurrentState:
+
+OffBoard – player is not on the board.
+
+Riding – includes normal riding, grinding, manualling.
+
+Bailed – bails / ragdoll / similar.
+
+Unknown – state could not be resolved.
+
+1.2 PoseData
+[Serializable]
+public struct PoseData
+{
+    public Vector3 position;
+    public Quaternion rotation;
+
+    public static PoseData From(Transform t)
+    {
+        if (!t) return default;
+        return new PoseData { position = t.position, rotation = t.rotation };
+    }
+}
+
+
+A simple world-space pose (position + rotation).
+
+Used for HMD, controllers, hands, and all board-related transforms.
+
+1.3 PlayerFlags
+[Serializable]
+public struct PlayerFlags
+{
+    public bool IsGrinding;
+    public bool IsManual;
+    public bool IsSwitch;
+}
+
+
+Fine-grained state flags:
+
+IsGrinding
+True when PlayerManager.CurrentState contains "Grinding" (case-insensitive).
+
+IsManual
+True when state contains "Manualling" or "Manual".
+
+IsSwitch
+Derived heuristic: true when the board moves roughly opposite to its forward direction (riding backwards).
+
+IsGrinding / IsManual are string-exact to current game states; IsSwitch is a best-effort kinematic inference.
+
+
+1.4 ButtonState
+[Serializable]
+public struct ButtonState
+{
+    // Digital face buttons
+    public bool A, B, X, Y;
+
+    // Digital “grasp” abstraction
+    public bool GraspLeft, GraspRight;
+
+    // Raw analogs
+    public float GripLeft,  GripRight;
+    public float TriggerLeft, TriggerRight;
+
+    // Game-defined thresholds (mirrored)
+    public float PinchThreshold;
+    public float GraspThreshold;
+    public float TriggerGripThreshold;
+
+    // Platform metadata
+    public string Platform;
+    public bool IsQuest;
+}
+
+
+Semantics:
+
+Face buttons (A/B/X/Y)
+Reflected from the game’s InputManager currA/currB/currX/currY if available.
+
+Analog grip & trigger
+Read via UnityEngine.XR.InputDevices:
+
+GripLeft/Right ← CommonUsages.grip
+
+TriggerLeft/Right ← CommonUsages.trigger
+
+GraspLeft / GraspRight
+High-level “grab” abstraction:
+
+True if:
+
+InputManager.leftGraspActivated/rightGraspActivated
+or
+
+XR grip ≥ GraspThreshold
+or
+
+XR gripButton is pressed.
+
+Thresholds
+Mirrored from game InputManager fields if present:
+
+pinchThreshold
+
+graspThreshold
+
+triggerGripThreshold
+
+Platform / IsQuest
+Reflected from game’s InputManager.platform and isQuest.
+
+1.5 BoardTargets
+[Serializable]
+public struct BoardTargets
+{
+    public PoseData RawTarget, Target, TargetOffset, TargetCorrection;
+    public PoseData PopRotation, ShuvRotation, FinalTarget;
+    public PoseData HeightTarget, HeightTargetLerped;
+    public PoseData PivotAnimParent, PivotAnimTarget, PivotAnimPosParent, PivotAnimPosTarget;
+    public PoseData BackTruckPivot, FrontTruckPivot;
+    public PoseData FlipRotationParent, FlipRotationTarget, ShuvAxisTarget;
+}
+
+
+Reflected from various PlayerManager transform fields (if present). These represent the internal targets the game uses to drive board movement and animations. Typical uses:
+
+FinalTarget – main “where the board ends up” target.
+
+PopRotation / ShuvRotation / FlipRotation* – trick rotation drives.
+
+BackTruckPivot / FrontTruckPivot – truck reference positions.
+
+HeightTarget – vertical movement driver.
+
+All values are world-space (position/rotation from the corresponding Transforms).
+
+
+1.6 VSSnapshot
+[Serializable]
+public struct VSSnapshot
+{
+    // Contract version
+    public int ApiVersion;
+
+    public double      Timestamp;
+    public int         Frame;
+    public VSPlayerState PlayerState;
+
+    // Rig
+    public PoseData Headset, LeftHand, RightHand, LeftHandTarget, RightHandTarget;
+    public PoseData LeftController, RightController;
+    public PoseData LeftControllerCorrected, RightControllerCorrected;
+    public PoseData LeftControllerOffset,   RightControllerOffset;
+    public PoseData TrackingSpace;
+
+    // Board
+    public BoardTargets Board;
+
+    // Input
+    public ButtonState Buttons;
+
+    // Fine-grained flags
+    public PlayerFlags Flags;
+}
+
+
+General semantics:
+
+ApiVersion
+Current bridge contract version: 1.
+Consumer mods should check this if they rely on newer fields in the future.
+
+Timestamp
+Time.realtimeSinceStartup in seconds.
+
+Frame
+Time.frameCount at the sampling moment.
+
+Rig poses are all world-space (or game’s tracking space, depending on how the game structures its transforms).
+
+2. VSBridge Class (Core API)
+2.1 Static members
+public class VSBridge : MonoBehaviour
+{
+    public const int ApiVersion = 1;
+
+    public static VSBridge Instance { get; private set; }
+
+    public static event SnapshotHandler OnSnapshot;
+    public static event PlayerStateChangedHandler OnPlayerStateChanged;
+}
+
+
+Instance
+The singleton VSBridge MonoBehaviour. Created automatically by Ensure() or by the bootstrap.
+
+OnSnapshot
+Raised whenever the bridge decides to emit a snapshot. Emission conditions:
+
+First snapshot, or
+
+Player state changed (excluding transitions into Unknown), or
+
+Significant pose movement (beyond posEpsilon/rotEpsilon), or
+
+Button edge on A/B/X/Y or GraspLeft/Right.
+
+OnPlayerStateChanged
+Raised when VSPlayerState changes (excluding transitions into Unknown).
+
+
+2.2 Sampling configuration
+[Header("Sampling")]
+[Range(1, 120)]
+public int sampleHz = 20;
+
+public float posEpsilon = 0.0025f;
+public float rotEpsilon = 1.0f;
+
+
+sampleHz
+Target sampling frequency (Hz). Used by Update() to throttle snapshots.
+
+posEpsilon
+Minimum positional change (in metres) before a pose counts as “moved”.
+
+rotEpsilon
+Minimum rotational change (in degrees) before a pose counts as “moved”.
+
+You can adjust these at runtime via VSBridge.Configure(...) (see below).
+
+
+2.3 Static helpers
+public static bool TryGetLatest(out VSSnapshot snapshot)
+public static void Configure(int sampleRateHz = 20,
+                             float posEps = 0.0025f,
+                             float rotEps = 1.0f)
+public static VSBridge Ensure()
+
+
+bool TryGetLatest(out VSSnapshot snapshot)
+Returns the most recently emitted snapshot (if any) without subscribing to events.
+
+if (VSBridge.TryGetLatest(out var snap))
+{
+    // use snap
+}
+
+
+void Configure(int sampleRateHz, float posEps, float rotEps)
+Adjusts sampling and movement detection thresholds at runtime.
+
+VSBridge.Configure(sampleRateHz: 60,
+                   posEps: 0.001f,
+                   rotEps: 0.5f);
+
+
+VSBridge Ensure()
+Ensures a VSBridge GameObject exists in the scene. Called automatically by:
+
+MelonEntry on initialize / scene load.
+
+VSBridgeBootstrap via [RuntimeInitializeOnLoadMethod] in non-editor builds.
+
+Consumer mods normally do not need to call Ensure() directly as long as the VSModBridge DLL is installed and enabled.
+
+
+3. Usage Patterns and Examples
+3.1 Referencing the bridge from another mod
+
+Add a reference to VSModBridge.dll in your mod’s project.
+
+Add using VS.ModBridge; in your C# file.
+
+Subscribe to VSBridge.OnSnapshot in OnInitializeMelon or similar.
+
+3.2 Example: Minimal logger mod
+
+Logs basic state and inputs whenever a snapshot is emitted.
+
+using MelonLoader;
+using VS.ModBridge;
+
+[assembly: MelonInfo(typeof(MySnapshotLoggerMod), "SnapshotLogger", "1.0.0", "Me")]
+
+public class MySnapshotLoggerMod : MelonMod
+{
+    public override void OnInitializeMelon()
+    {
+        VSBridge.OnSnapshot += HandleSnapshot;
+    }
+
+    private void HandleSnapshot(in VSSnapshot s)
+    {
+        if (s.ApiVersion < 1) return; // future-proof check
+
+        MelonLogger.Msg(
+            $"[VSBridge] f={s.Frame} state={s.PlayerState} " +
+            $"grind={s.Flags.IsGrinding} manual={s.Flags.IsManual} " +
+            $"GL={s.Buttons.GraspLeft} GR={s.Buttons.GraspRight}");
+    }
+}
+
+3.3 Example: Reacting to grind/manual/switch
+
+Trigger effects based on PlayerFlags:
+
+using MelonLoader;
+using VS.ModBridge;
+
+[assembly: MelonInfo(typeof(GrindFXMod), "GrindFX", "1.0.0", "Me")]
+
+public class GrindFXMod : MelonMod
+{
+    public override void OnInitializeMelon()
+    {
+        VSBridge.OnSnapshot += OnSnapshot;
+    }
+
+    private void OnSnapshot(in VSSnapshot s)
+    {
+        if (s.ApiVersion < 1) return;
+        if (s.PlayerState != VSPlayerState.Riding) return;
+
+        if (s.Flags.IsGrinding)
+        {
+            // Example: spawn grind sparks at back truck
+            var pivot = s.Board.BackTruckPivot;
+            SpawnGrindParticles(pivot.position, pivot.rotation);
+        }
+
+        if (s.Flags.IsManual)
+        {
+            // Example: show a “manual meter” UI
+            UpdateManualUI(true);
+        }
+        else
+        {
+            UpdateManualUI(false);
+        }
+
+        if (s.Flags.IsSwitch)
+        {
+            // Example: change UI color to indicate switch stance
+            SetSwitchIndicator(true);
+        }
+        else
+        {
+            SetSwitchIndicator(false);
+        }
+    }
+
+    void SpawnGrindParticles(Vector3 pos, Quaternion rot) { /* ... */ }
+    void UpdateManualUI(bool active) { /* ... */ }
+    void SetSwitchIndicator(bool on) { /* ... */ }
+}
+
+3.4 Example: Using analog grip/trigger for gestures
+
+Implement a simple hand-gesture detector:
+
+private void OnSnapshot(in VSSnapshot s)
+{
+    var buttons = s.Buttons;
+
+    // “Fist” when grip is high and trigger is low
+    bool leftFist  = buttons.GripLeft  > 0.8f && buttons.TriggerLeft  < 0.2f;
+    bool rightFist = buttons.GripRight > 0.8f && buttons.TriggerRight < 0.2f;
+
+    // “Point” when trigger is high but grip is low
+    bool leftPoint = buttons.TriggerLeft > 0.8f && buttons.GripLeft < 0.2f;
+    bool rightPoint = buttons.TriggerRight > 0.8f && buttons.GripRight < 0.2f;
+
+    // React to gestures…
+}
+
+
+Because the bridge exposes raw analogs, mods can define their own gesture thresholds without fighting the base game’s GraspThreshold.
+
+3.5 Example: Poll-only usage via TryGetLatest
+
+If you do not want to subscribe to events:
+
+public override void OnUpdate()
+{
+    if (!VSBridge.TryGetLatest(out var s)) return;
+    if (s.ApiVersion < 1) return;
+
+    // Example: camera mod reading headset pose
+    var headPos = s.Headset.position;
+    var headRot = s.Headset.rotation;
+
+    UpdateCustomCamera(headPos, headRot);
+}
+
+
+4. Behaviour Notes and Limitations
+
+The bridge uses reflection to find InputManager and PlayerManager by name ("InputManager", "PlayerManager") and their fields (e.g. CurrentState).
+
+If these names or fields change in future game updates, some data may fall back to defaults (e.g. PlayerState = Unknown, thresholds default to 0.5).
+
+IsSwitch is currently derived from board kinematics and may not perfectly match any future official “switch” implementation.
+
+The bridge is designed to be non-intrusive:
+
+It does not patch or modify game logic.
+
+It only reads data and emits snapshots.
