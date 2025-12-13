@@ -589,7 +589,9 @@ namespace VS.ModBridge
             if (TryReadXRAnalog(out float gL, out float gR,
                                 out float tL, out float tR,
                                 out bool gbL, out bool gbR,
-                                out bool stickL, out bool stickR))
+                                out bool stickL, out bool stickR,
+                                out bool primL, out bool secL,
+                                out bool primR, out bool secR))
             {
                 bs.GripLeft = gL;
                 bs.GripRight = gR;
@@ -598,6 +600,14 @@ namespace VS.ModBridge
 
                 bs.StickClickLeft = stickL;
                 bs.StickClickRight = stickR;
+
+                // Face buttons (typical XR mapping):
+                // Left:  primary=X, secondary=Y
+                // Right: primary=A, secondary=B
+                bs.X = primL;
+                bs.Y = secL;
+                bs.A = primR;
+                bs.B = secR;
 
                 // Do NOT combine unless needed
                 bs.GraspLeft |= (gL >= graspTh) || gbL;
@@ -614,11 +624,14 @@ namespace VS.ModBridge
         bool TryReadXRAnalog(out float gL, out float gR,
                              out float tL, out float tR,
                              out bool gbL, out bool gbR,
-                             out bool stickL, out bool stickR)
+                             out bool stickL, out bool stickR,
+                             out bool primL, out bool secL,
+                             out bool primR, out bool secR)
         {
             gL = gR = tL = tR = 0f;
             gbL = gbR = false;
             stickL = stickR = false;
+            primL = secL = primR = secR = false;
 
             try
             {
@@ -631,6 +644,8 @@ namespace VS.ModBridge
                     L.TryGetFeatureValue(CommonUsages.trigger, out tL);
                     L.TryGetFeatureValue(CommonUsages.gripButton, out gbL);
                     L.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out stickL);
+                    L.TryGetFeatureValue(CommonUsages.primaryButton, out primL);
+                    L.TryGetFeatureValue(CommonUsages.secondaryButton, out secL);
                 }
 
                 _xrBuf.Clear();
@@ -642,6 +657,8 @@ namespace VS.ModBridge
                     R.TryGetFeatureValue(CommonUsages.trigger, out tR);
                     R.TryGetFeatureValue(CommonUsages.gripButton, out gbR);
                     R.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out stickR);
+                    R.TryGetFeatureValue(CommonUsages.primaryButton, out primR);
+                    R.TryGetFeatureValue(CommonUsages.secondaryButton, out secR);
                 }
 
                 return true;
