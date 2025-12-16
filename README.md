@@ -1,5 +1,7 @@
 The mod itself will be later split into more defined CS files for each part of the application.
 
+Example Mod:
+https://github.com/Jish2637/WhereDidMyBoardGo
 
 VS Mod Bridge – Developer Documentation
 1. INTRODUCTION
