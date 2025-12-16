@@ -81,6 +81,10 @@ namespace VS.ModBridge
     [Serializable]
     public struct BoardTargets
     {
+        // True in-world board pose (best-effort; NOT a PlayerManager “target”)
+        public PoseData ActualWorld;
+
+        // PlayerManager targets/pivots (solver-related)
         public PoseData RawTarget, Target, TargetOffset, TargetCorrection;
         public PoseData PopRotation, ShuvRotation, FinalTarget;
         public PoseData HeightTarget, HeightTargetLerped;
@@ -156,6 +160,9 @@ namespace VS.ModBridge
     {
         // Public contract version for consumer mods
         public const int ApiVersion = 1;
+
+        Transform _boardWorldTf;
+        bool _boardWorldSearched;
 
         public static VSBridge Instance { get; private set; }
         public static event SnapshotHandler OnSnapshot;
@@ -237,6 +244,9 @@ namespace VS.ModBridge
             // New: only dump InputManager fields when you explicitly want the probe spam
             if (verboseProbeLogs)
                 DebugListInputManagerFields();
+
+            _boardWorldTf = null;
+            _boardWorldSearched = false;
 
             _nextTick = 0f; _hasLast = false;
         }
@@ -567,6 +577,8 @@ namespace VS.ModBridge
 
             return new BoardTargets
             {
+                ActualWorld = PoseData.From(ResolveBoardWorldTransform(FindPM("headset") ? FindPM("headset").position : Vector3.zero)),
+
                 RawTarget = PoseData.From(FindPM("rawBoardTarget")),
                 Target = PoseData.From(FindPM("boardTarget")),
                 TargetOffset = PoseData.From(FindPM("boardTargetOffset")),
@@ -587,6 +599,73 @@ namespace VS.ModBridge
                 ShuvAxisTarget = PoseData.From(FindPM("shuvAxisTarget")),
             };
         }
+
+        Transform ResolveBoardWorldTransform(Vector3 headPos)
+        {
+            if (_boardWorldTf) return _boardWorldTf;
+            if (_boardWorldSearched) return null;
+            _boardWorldSearched = true;
+
+            try
+            {
+                // Heuristic: find a scene object that looks like the actual board.
+                // Prefer: has a Rigidbody, name contains board/skate, and is NOT under the skater/headset rig.
+                Transform best = null;
+                float bestScore = float.NegativeInfinity;
+
+                // Scan rigidbodies first (cheaper + better signal than scanning every Transform)
+                var rbs = Resources.FindObjectsOfTypeAll<Rigidbody>();
+                for (int i = 0; i < rbs.Length; i++)
+                {
+                    var rb = rbs[i];
+                    if (!rb) continue;
+
+                    var tr = rb.transform;
+                    if (!tr) continue;
+
+                    // Ignore anything clearly part of the player rig
+                    var rootName = tr.root ? tr.root.name : "";
+                    if (rootName.IndexOf("Skater", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                    if (rootName.IndexOf("Player", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+
+                    string n = tr.name ?? "";
+                    string lower = n.ToLowerInvariant();
+
+                    // Must look board-like
+                    bool nameMatch = lower.Contains("board") || lower.Contains("skate");
+                    if (!nameMatch) continue;
+
+                    // Score: farther from head is more likely “lost board”, and slightly prefer larger rigidbodies
+                    float dist = Vector3.Distance(tr.position, headPos);
+                    float size = 0f;
+                    try { size = rb.GetComponent<Collider>() ? rb.GetComponent<Collider>().bounds.size.magnitude : 0f; } catch { }
+
+                    float score = dist * 10f + size;
+
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        best = tr;
+                    }
+                }
+
+                if (best)
+                {
+                    _boardWorldTf = best;
+                    LogOncePer("board-world-ok", 5f, $"[BoardWorld] Using '{best.name}' root='{best.root?.name}' pos={Vec(best.position)}");
+                    return _boardWorldTf;
+                }
+
+                LogOncePer("board-world-miss", 5f, "[BoardWorld] No suitable Rigidbody board candidate found.");
+            }
+            catch (Exception ex)
+            {
+                LogOncePer("board-world-err", 5f, "[BoardWorld] err " + ex.Message);
+            }
+
+            return null;
+        }
+
         ButtonState ReadButtons()
         {
             var bs = new ButtonState();
