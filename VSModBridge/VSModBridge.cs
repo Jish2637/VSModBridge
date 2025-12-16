@@ -164,8 +164,13 @@ namespace VS.ModBridge
         [Header("Sampling")][Range(1, 120)] public int sampleHz = 5;
         public float posEpsilon = 0.0025f, rotEpsilon = 1.0f;
 
-        [Tooltip("Write to Mods/VSBridge.log")] public bool fileLog = true;
+        [Tooltip("Write to Mods/VSBridge.log")] public bool fileLog = false;
         [Tooltip("Spam the Melon console")] public bool consoleLog = false;
+
+        // control log growth
+        [Tooltip("Clear Mods/VSBridge.log on startup")] public bool clearFileOnStart = true;
+        [Tooltip("Enable verbose startup probes (reflection dumps, resolve spam)")] public bool verboseProbeLogs = false;
+        [Tooltip("Enable verbose per-tick logs (state/build/no-emit/switch debug)")] public bool verboseTickLogs = false;
 
         string _logPath;
         float _nextTick;
@@ -203,15 +208,36 @@ namespace VS.ModBridge
         {
             if (Instance && Instance != this) { Destroy(gameObject); return; }
             Instance = this; DontDestroyOnLoad(gameObject);
+
             _logPath = System.IO.Path.Combine(Application.persistentDataPath, "Mods", "VSBridge.log");
+
+            // New: start each run with a clean log file (prevents multi-session growth)
+            if (fileLog && clearFileOnStart)
+            {
+                try
+                {
+                    var dir = System.IO.Path.GetDirectoryName(_logPath);
+                    if (!string.IsNullOrEmpty(dir))
+                        System.IO.Directory.CreateDirectory(dir);
+
+                    System.IO.File.WriteAllText(_logPath, string.Empty);
+                }
+                catch { }
+            }
+
             Log($"[Awake] Unity {Application.unityVersion} dataPath={Application.dataPath} persistent={Application.persistentDataPath}");
         }
+
 
         void OnEnable()
         {
             Log("[OnEnable] starting resolve loop");
             StartCoroutine(ResolveLoop());
-            DebugListInputManagerFields();
+
+            // New: only dump InputManager fields when you explicitly want the probe spam
+            if (verboseProbeLogs)
+                DebugListInputManagerFields();
+
             _nextTick = 0f; _hasLast = false;
         }
 
@@ -251,7 +277,8 @@ namespace VS.ModBridge
             }
             else
             {
-                LogOncePer("no-emit", 2f, "[Tick] no emit (no movement/no edges)");
+                if (verboseTickLogs)
+                    LogOncePer("no-emit", 2f, "[Tick] no emit (no movement/no edges)");
             }
         }
 
@@ -337,7 +364,9 @@ namespace VS.ModBridge
 
         VSSnapshot BuildSnapshot()
         {
-            LogOncePer("build-start", 1f, "[Build] snapshot...");
+            if (verboseTickLogs)
+                LogOncePer("build-start", 1f, "[Build] snapshot.");
+
 
             string rawStateText;
             var state = ReadPlayerState(out rawStateText);
@@ -422,7 +451,7 @@ namespace VS.ModBridge
                 {
                     var raw = f.GetValue(_playerMgr);
                     rawStateText = raw?.ToString() ?? string.Empty;
-                    Log($"[State] CurrentState(field)='{rawStateText}'");
+                    if (verboseTickLogs) Log($"[State] CurrentState(field)='{rawStateText}'");
                     return Map(rawStateText);
                 }
 
@@ -432,7 +461,7 @@ namespace VS.ModBridge
                 {
                     var raw = p.GetValue(_playerMgr, null);
                     rawStateText = raw?.ToString() ?? string.Empty;
-                    Log($"[State] CurrentState(prop)='{rawStateText}'");
+                    if (verboseTickLogs) Log($"[State] CurrentState(field)='{rawStateText}'");
                     return Map(rawStateText);
                 }
 
@@ -442,7 +471,7 @@ namespace VS.ModBridge
                 {
                     var raw = m.Invoke(_playerMgr, null);
                     rawStateText = raw?.ToString() ?? string.Empty;
-                    Log($"[State] GetCurrentState()='{rawStateText}'");
+                    if (verboseTickLogs) Log($"[State] CurrentState(field)='{rawStateText}'");
                     return Map(rawStateText);
                 }
 
@@ -512,8 +541,11 @@ namespace VS.ModBridge
             // Use a small tolerance so slight angles still count as "backwards".
             bool isBackwards = dot < -0.35f;
 
-            LogOncePer("switch-debug", 0.5f,
-                $"[Switch] dot={dot:F2} isBackwards={isBackwards}");
+            if (verboseTickLogs)
+            {
+                LogOncePer("switch-debug", 0.5f,
+                    $"[Switch] dot={dot:F2} isBackwards={isBackwards}");
+            }
 
             return isBackwards;
         }
