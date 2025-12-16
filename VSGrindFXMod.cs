@@ -9,6 +9,24 @@
 
 //Just a fun little thing i tried.
 
+// Refrences used // pay attention to the unity refrences + VSModBridge
+    //<Reference Include="MelonLoader">
+    //<Reference Include="System" />
+    //<Reference Include="System.Core" />
+    //<Reference Include="System.Xml.Linq" />
+    //<Reference Include="System.Data.DataSetExtensions" />
+    //<Reference Include="Microsoft.CSharp" />
+    //<Reference Include="System.Data" />
+    //<Reference Include="System.Net.Http" />
+    //<Reference Include="System.Xml" />
+    //<Reference Include="UnityEngine">
+    //<Reference Include="UnityEngine.CoreModule">
+    //<Reference Include="UnityEngine.ParticleSystemModule">
+    //<Reference Include="UnityEngine.PhysicsModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+    //<Reference Include="UnityEngine.TextRenderingModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+    //<Reference Include="VSModBridge">
+
+  
 using System;
 using MelonLoader;
 using UnityEngine;
