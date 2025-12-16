@@ -1,7 +1,9 @@
 The mod itself will be later split into more defined CS files for each part of the application.
 
-Example Mod:
+Example Mods:
 https://github.com/Jish2637/WhereDidMyBoardGo
+
+https://github.com/Jish2637/ReplayCamIndicator
 
 VS Mod Bridge – Developer Documentation
 1. INTRODUCTION
